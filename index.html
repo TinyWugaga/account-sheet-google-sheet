@@ -1,3 +1,295 @@
+<!DOCTYPE html>
 <html>
+
+<head>
+    <title>Google Apps Script API Quickstart</title>
+    <meta charset="utf-8" />
+    <style>
+        caption {
+            padding: 10px 0;
+            line-height: 1.5;
+            background-color: rgb(1, 77, 103);
+            font: bold 24px "微軟雅黑";
+            color: #fff;
+        }
+
+        table {
+            border-collapse: collapse;
+            border-spacing: 0;
+            border: 1px solid #c0c0c0;
+            width: 100vw;
+        }
+
+        th,
+        td {
+            border: 1px solid #d0d0d0;
+            color: #404060;
+            padding: 10px;
+        }
+
+        th {
+            background-color: #09c;
+            font: bold 16px "微軟雅黑";
+            color: #fff;
+        }
+
+        td {
+            font: 14px "微軟雅黑";
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="tablediv"></div>
+
+    <script type="text/javascript">
+        fetch('https://script.google.com/macros/s/AKfycbxMvp12vXkwmtPHnVveY2kBSmdPj597GFdJlBU24uISjO5qoYLD8TMs/exec', {
+                method: 'GET'
+            })
+            .then(res => res.json())
+            .then(response => {
+                const accountData = getArray(response)
+                getAccount(accountData)
+                createTable(accountData)
+            })
+            .catch(error => console.error('Error:', error))
+
+        function getArray(data) {
+            const {
+                payment,
+                memberList
+            } = data
+            payment.forEach(x => x.payMembers.sort(sortByPaymentValue))
+
+            function sortByMemberList(a, b) {
+                let aObj, bObj
+                memberList.forEach((member, i) => {
+                    if (member === a.name) {
+                        aObj = i
+                    }
+                    if (member === b.name) {
+                        bObj = i
+                    }
+                })
+                return a > b;
+            }
+
+            function sortByPaymentValue(a, b) {
+                return a.value > b.value ? -1 : 1;
+            }
+
+            console.log(payment)
+
+            const memberPaymentList = memberList.map((member, i) => {
+                let paymentList = []
+                memberList.forEach((toMember, j) => {
+                    let payItem = []
+                    const shouldPay = payment.filter(item => {
+                        return item.shouldPayMembers.filter(m => m.name === member).length !== 0 
+                            && item.payMembers[0]['name'] === toMember
+                    })
+                    if (shouldPay.length !== 0) {
+                        payItem = shouldPay.map(item => {
+                            return {
+                                name: item.name,
+                                value: item.memberPay.value
+                            }
+                        })
+
+                    }
+
+                    let receivableItem = []
+                    const shouldReceivable = payment.filter(item => {
+                        return item.shouldPayMembers.filter(m => m.name === toMember).length !== 0
+                            && item.payMembers[0]['name'] === member
+                    })
+                    if (shouldReceivable.length !== 0) {
+                        receivableItem = shouldReceivable.map(item => {
+                            return {
+                                name: item.name,
+                                value: item.memberPay.value
+                            }
+                        })
+                    }
+
+                    const splitAccount = payment.map(item => {
+                        return spiltAccount(member, toMember, item)
+                    }).filter(x => x !== null)
+                    if (splitAccount.length !== 0) {
+                        splitAccount.forEach(item => {
+                            if (item.value > 0) {
+                                payItem.push({
+                                    name: item.name,
+                                    value: item.value
+                                })
+                            }
+                            if (item.value < 0) {
+                                receivableItem.push({
+                                    name: item.name,
+                                    value: -(item.value)
+                                })
+                            }
+                            return
+                        })
+                    }
+
+                    let pay = payItem.map(x => x.value).reduce((acc, current) => acc + current, 0)
+                    let receivable = receivableItem.map(x => x.value).reduce((acc, current) => acc +
+                        current, 0)
+
+                    paymentList.push({
+                        name: toMember,
+                        payItem,
+                        receivableItem,
+                        amount: pay - receivable
+                    })
+                })
+                return {
+                    name: member,
+                    paymentList
+                }
+            })
+
+            function spiltAccount(member, toMember, item) {
+                const {
+                    payMembers
+                } = item
+
+                if (member === toMember || payMembers.length <= 1) return null // 本人帳 || 無需分帳
+
+                const payMember = payMembers[0].name // 分帳人
+
+                if (payMember === member) { // 為分帳人
+                    const hadPay = payMembers.slice(1).filter(p => p.name === toMember)
+                    if (hadPay.length !== 0) {
+                        return {
+                            name: item.name,
+                            value: hadPay[0].value - item.memberPay.value
+                        }
+                    }
+                } else {
+                    if (payMember === toMember) { // 為被分帳人
+                        const hadPay = payMembers.slice(1).filter(p => p.name === member)
+                        if (hadPay.length !== 0) {
+                            return {
+                                name: item.name,
+                                value: item.memberPay.value - hadPay[0].value
+                            }
+                        }
+                    }
+                }
+
+                return null
+            }
+
+            console.log(memberPaymentList)
+            return {
+                memberList,
+                memberPaymentList
+            }
+        }
+
+        function getAccount(data) {
+            const {
+                memberList,
+                memberPaymentList
+            } = data
+            memberPaymentList.forEach(memberPayment => {
+                const {
+                    name,
+                    paymentList
+                } = memberPayment
+                paymentList.forEach((payment,i) => {
+                    const toMember = payment.name
+                    const { amount } = payment
+                    if(amount <= 0) return
+                    const toMemberShouldPaymentList = memberPaymentList[i].paymentList.filter(p => p.amount > 0)
+                    toMemberShouldPaymentList.sort((a,b) => {
+                        return b.amount - a.amount
+                    })
+                    // console.log(toMember, toMemberShouldPaymentList)
+                    const {
+                        memberShouldPayment, toMemberShouldPayment
+                    } = transferAccount(amount, toMemberShouldPaymentList)
+                    console.log(name, toMember, amount, memberShouldPayment, toMemberShouldPayment)
+                })
+
+                function transferAccount(memberAmount, paymentList) {
+                    const memberShouldPayment = []
+                    const toMemberShouldPayment = []
+                    paymentList.forEach((payment, i) => {
+                        if(memberAmount <= 0) return
+                        const summary = memberAmount - payment.amount
+                        if(summary > 0) {// 還沒抵完
+                            memberShouldPayment.push({
+                                name: payment.name,
+                                value: payment.amount
+                            })
+                            toMemberShouldPayment.push({
+                                name: payment.name,
+                                value: 0
+                            })
+                            memberAmount = summary
+                        } else {// 抵完了
+                            memberShouldPayment.push({
+                                name: payment.name,
+                                value: memberAmount
+                            })
+                            toMemberShouldPayment.push({
+                                name: payment.name,
+                                value: -summary
+                            })
+                        }
+                    })
+                    return {
+                        memberShouldPayment, toMemberShouldPayment
+                    }
+                }
+            })
+        }
+
+        function createTable(data) {
+            const {
+                memberList,
+                memberPaymentList
+            } = data
+            const heading = "花蓮費用支付表";
+
+            // create a table
+            const table = document.createElement("table");
+
+            // add a caption
+            table.createCaption().textContent = heading;
+
+            // insert a row and add headings to it
+            const headRow = table.insertRow();
+            headRow.insertCell().outerHTML =
+                '<th style="font-size:10px"><p style="text-align:right">\收款人</p><p style="text-align:left">付款人\</p></th>' // 第一格空白
+            memberList.forEach(member => { // 表格標題列
+                headRow.insertCell(-1).outerHTML = `<th>${member}</th>`;
+            })
+
+            memberPaymentList.forEach((memberRow, i) => {
+                const {
+                    name,
+                    paymentList
+                } = memberRow
+                const bodyRow = table.insertRow(-1);
+                bodyRow.insertCell(-1).innerHTML = name;
+                paymentList.forEach((paymentItem, j) => {
+                    const {
+                        amount
+                    } = paymentItem
+                    bodyRow.insertCell(-1).innerText = amount <= 0 ? '' : amount
+                })
+            })
+
+            // add table to div
+            document.getElementById("tablediv").appendChild(table);
+        }
+    </script>
+
+</body>
 
 </html>
