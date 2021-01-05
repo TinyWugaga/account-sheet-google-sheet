@@ -17,7 +17,11 @@
             border-collapse: collapse;
             border-spacing: 0;
             border: 1px solid #c0c0c0;
-            width: 100vw;
+            width: 100%;
+            position: relative;
+            left: 0;
+            right: 0;
+            margin: 10px auto;
         }
 
         th,
@@ -41,7 +45,8 @@
 </head>
 
 <body>
-    <div id="tablediv"></div>
+    <div id="tablepaymentdiv"></div>
+    <div id="tableaccountdiv"></div>
 
     <script type="text/javascript">
         fetch('https://script.google.com/macros/s/AKfycbxMvp12vXkwmtPHnVveY2kBSmdPj597GFdJlBU24uISjO5qoYLD8TMs/exec', {
@@ -49,9 +54,10 @@
             })
             .then(res => res.json())
             .then(response => {
-                const accountData = getArray(response)
-                getAccount(accountData)
-                createTable(accountData)
+                const paymentData = getArray(response)
+                createTable(paymentData)
+                const accountData = getAccount(paymentData)
+                createAccountTable(accountData)
             })
             .catch(error => console.error('Error:', error))
 
@@ -195,58 +201,61 @@
                 memberList,
                 memberPaymentList
             } = data
+
+            let accountList = []
             memberPaymentList.forEach(memberPayment => {
-                const {
-                    name,
-                    paymentList
-                } = memberPayment
-                paymentList.forEach((payment,i) => {
-                    const toMember = payment.name
-                    const { amount } = payment
-                    if(amount <= 0) return
-                    const toMemberShouldPaymentList = memberPaymentList[i].paymentList.filter(p => p.amount > 0)
-                    toMemberShouldPaymentList.sort((a,b) => {
-                        return b.amount - a.amount
-                    })
-                    // console.log(toMember, toMemberShouldPaymentList)
-                    const {
-                        memberShouldPayment, toMemberShouldPayment
-                    } = transferAccount(amount, toMemberShouldPaymentList)
-                    console.log(name, toMember, amount, memberShouldPayment, toMemberShouldPayment)
+                const { name, paymentList } = memberPayment
+                 accountPayment = []
+                 paymentList.forEach(p => {
+                    const { amount, name } = p
+                    if(amount > 0) {
+                        accountPayment[name] = {amount}
+                    }
+                    return null
                 })
 
-                function transferAccount(memberAmount, paymentList) {
-                    const memberShouldPayment = []
-                    const toMemberShouldPayment = []
-                    paymentList.forEach((payment, i) => {
-                        if(memberAmount <= 0) return
-                        const summary = memberAmount - payment.amount
-                        if(summary > 0) {// 還沒抵完
-                            memberShouldPayment.push({
-                                name: payment.name,
-                                value: payment.amount
-                            })
-                            toMemberShouldPayment.push({
-                                name: payment.name,
-                                value: 0
-                            })
-                            memberAmount = summary
-                        } else {// 抵完了
-                            memberShouldPayment.push({
-                                name: payment.name,
-                                value: memberAmount
-                            })
-                            toMemberShouldPayment.push({
-                                name: payment.name,
-                                value: -summary
-                            })
+                accountList[name] = accountPayment
+            })
+
+            console.log(accountList)
+
+            memberList.forEach(member => {
+                const accountPayment = accountList[member]
+                accountPayment.sort((a, b) => {return b.amount - a.amount})
+                console.log(member, accountPayment)
+                Object.keys(accountPayment).forEach(toMember => {
+                    let paymentAmount = accountList[member][toMember]['amount']
+                    const toMemberAccountPayment = accountList[toMember]
+                    toMemberAccountPayment.sort((a, b) => {return b.amount - a.amount})
+                    Object.keys(toMemberAccountPayment).forEach(toMemberPayment => {
+                        console.log(paymentAmount)
+                        if(paymentAmount > 0) {
+                            const toMemberPaymentAmount = accountList[toMember][toMemberPayment]['amount']
+                            let summary = paymentAmount - toMemberPaymentAmount
+                            accountList[member][toMemberPayment] = { amount: accountList[member][toMemberPayment]?.amount || 0 }
+                            let memberToMemberPaymentAmount = accountList[member][toMemberPayment]['amount']
+                            console.log('test:', memberToMemberPaymentAmount)
+
+                            console.log(member, toMember, toMemberPayment, toMemberPaymentAmount)
+                            if(summary > 0) {
+                                accountList[member][toMember]['amount'] = summary
+                                accountList[member][toMemberPayment]['amount'] = toMemberPaymentAmount + memberToMemberPaymentAmount
+                                accountList[toMember][toMemberPayment]['amount'] = 0
+                            } else {
+                                accountList[member][toMember]['amount'] = 0
+                                accountList[member][toMemberPayment]['amount'] = paymentAmount + memberToMemberPaymentAmount
+                                accountList[toMember][toMemberPayment]['amount'] = -(summary)
+                            }
+                            paymentAmount = summary
                         }
                     })
-                    return {
-                        memberShouldPayment, toMemberShouldPayment
-                    }
-                }
+                })
             })
+            
+            return {
+                memberList,
+                accountList
+            }
         }
 
         function createTable(data) {
@@ -254,7 +263,49 @@
                 memberList,
                 memberPaymentList
             } = data
-            const heading = "花蓮費用支付表";
+            const heading = "花蓮費用支付表(個人對個人)";
+
+            // create a table
+            const table = document.createElement("table");
+
+            // add a caption
+            table.createCaption().textContent = heading;
+
+            // insert a row and add headings to it
+            const headRow = table.insertRow();
+            headRow.insertCell().outerHTML =
+                '<th style="font-size:10px"><p style="text-align:right">\收款人</p><p style="text-align:left">付款人\</p></th>' // 第一格空白
+            memberList.forEach(member => { // 表格標題列
+                headRow.insertCell(-1).outerHTML = `<th>${member}</th>`;
+            })
+            headRow.insertCell(-1).outerHTML = '<th>應付總數</th>';
+
+            memberPaymentList.forEach((memberRow, i) => {
+                const {
+                    name,
+                    paymentList
+                } = memberRow
+                const bodyRow = table.insertRow(-1);
+                bodyRow.insertCell(-1).innerHTML = name;
+                paymentList.forEach(paymentItem => {
+                    const {
+                        amount
+                    } = paymentItem
+                    bodyRow.insertCell(-1).innerText = amount <= 0 ? '' : amount
+                })
+                bodyRow.insertCell(-1).outerHTML = `<td style="background-color:rgba(220, 173, 100, .5);font-weight:900">${paymentList.reduce((acc, count) => acc + count.amount, 0)}</td>`
+            })
+
+            // add table to div
+            document.getElementById("tablepaymentdiv").appendChild(table);
+        }
+
+        function createAccountTable(data) {
+            const {
+                memberList,
+                accountList
+            } = data
+            const heading = "花蓮費用支付表(帳目分帳表)";
 
             // create a table
             const table = document.createElement("table");
@@ -270,25 +321,19 @@
                 headRow.insertCell(-1).outerHTML = `<th>${member}</th>`;
             })
 
-            memberPaymentList.forEach((memberRow, i) => {
-                const {
-                    name,
-                    paymentList
-                } = memberRow
+            memberList.forEach(member => {
                 const bodyRow = table.insertRow(-1);
-                bodyRow.insertCell(-1).innerHTML = name;
-                paymentList.forEach((paymentItem, j) => {
-                    const {
-                        amount
-                    } = paymentItem
+                bodyRow.insertCell(-1).innerHTML = member;
+                memberList.forEach(account => {
+                    const amount = accountList[member]?.[account]?.amount || ''
                     bodyRow.insertCell(-1).innerText = amount <= 0 ? '' : amount
                 })
             })
 
             // add table to div
-            document.getElementById("tablediv").appendChild(table);
+            document.getElementById("tableaccountdiv").appendChild(table);
         }
-    </script>
+</script>
 
 </body>
 
